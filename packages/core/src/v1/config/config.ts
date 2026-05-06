@@ -118,6 +118,12 @@ export const Info = Schema.Struct({
   instructions: Schema.optional(Schema.mutable(Schema.Array(Schema.String))).annotate({
     description: "Additional instruction files or patterns to include",
   }),
+  configBoundary: Schema.optional(Schema.Literals(["current", "home", "root", "none"])).annotate({
+    description:
+      "Controls how far up the filesystem OpenCode searches for parent configs and instruction files. " +
+      "'current' (default) stops at the git worktree root. 'home' walks up to $HOME (useful for client-level MCP/AGENTS.md inheritance). " +
+      "'root' walks to /. 'none' disables parent config search entirely.",
+  }),
   layout: Schema.optional(ConfigLayoutV1.Layout).annotate({ description: "@deprecated Always uses stretch layout." }),
   permission: Schema.optional(ConfigPermissionV1.Info),
   tools: Schema.optional(Schema.Record(Schema.String, Schema.Boolean)),

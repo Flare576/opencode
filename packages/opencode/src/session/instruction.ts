@@ -2,7 +2,7 @@ import path from "path"
 import { SessionV1 } from "@opencode-ai/core/v1/session"
 import { Effect, Layer, Context } from "effect"
 import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/unstable/http"
-import { Config } from "@/config/config"
+import { Config, getConfigStop } from "@/config/config"
 import { InstanceState } from "@/effect/instance-state"
 import { RuntimeFlags } from "@/effect/runtime-flags"
 import { Flag } from "@opencode-ai/core/flag/flag"
@@ -74,11 +74,11 @@ export const layer: Layer.Layer<
       ),
     )
 
-    const relative = Effect.fnUntraced(function* (instruction: string) {
+    const relative = Effect.fnUntraced(function* (instruction: string, stop: string) {
       const ctx = yield* InstanceState.context
       if (!Flag.OPENCODE_DISABLE_PROJECT_CONFIG) {
         return yield* fs
-          .globUp(instruction, ctx.directory, ctx.worktree)
+          .globUp(instruction, ctx.directory, stop)
           .pipe(Effect.catch(() => Effect.succeed([] as string[])))
       }
       return yield* fs
@@ -109,6 +109,7 @@ export const layer: Layer.Layer<
       const config = yield* cfg.get()
       const ctx = yield* InstanceState.context
       const paths = new Set<string>()
+      const stop = getConfigStop(config.configBoundary, ctx.worktree)
 
       for (const file of globalFiles) {
         if (yield* fs.existsSafe(file)) {
@@ -117,11 +118,10 @@ export const layer: Layer.Layer<
         }
       }
 
-      // The first project-level match wins so we don't stack AGENTS.md/CLAUDE.md from every ancestor.
       if (!Flag.OPENCODE_DISABLE_PROJECT_CONFIG) {
         for (const file of instructionFiles) {
           const matches = yield* fs
-            .findUp(file, ctx.directory, ctx.worktree)
+            .findUp(file, ctx.directory, stop)
             .pipe(Effect.catch(() => Effect.succeed([])))
           if (matches.length > 0) {
             matches.forEach((item) => paths.add(path.resolve(item)))
@@ -141,7 +141,7 @@ export const layer: Layer.Layer<
                   absolute: true,
                   include: "file",
                 })
-              : relative(instruction)
+              : relative(instruction, stop)
           ).pipe(Effect.catch(() => Effect.succeed([] as string[])))
           matches.forEach((item) => paths.add(path.resolve(item)))
         }

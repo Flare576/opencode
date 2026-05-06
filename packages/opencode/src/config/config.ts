@@ -115,6 +115,21 @@ type Info = ConfigV1.Info & {
   plugin_origins?: ConfigPlugin.Origin[]
 }
 
+export function getConfigStop(boundary?: Info["configBoundary"], worktree?: string): string {
+  const effective = Flag.OPENCODE_CONFIG_BOUNDARY ?? boundary ?? "current"
+  switch (effective) {
+    case "none":
+      return worktree ?? "/"
+    case "home":
+      return Global.Path.home
+    case "root":
+      return "/"
+    case "current":
+    default:
+      return worktree ?? "/"
+  }
+}
+
 type State = {
   config: Info
   directories: string[]
@@ -220,6 +235,13 @@ export const layer = Layer.effect(
       if (!("path" in options)) return data
 
       yield* Effect.promise(() => resolveLoadedPlugins(data, options.path))
+      if (data.instructions) {
+        const configDir = path.dirname(options.path)
+        data.instructions = data.instructions.map((instruction) => {
+          if (!instruction.startsWith("./") && !instruction.startsWith("../")) return instruction
+          return path.resolve(configDir, instruction)
+        })
+      }
       if (!data.$schema) {
         data.$schema = "https://opencode.ai/config.json"
         const updated = text.replace(/^\s*\{/, '{\n  "$schema": "https://opencode.ai/config.json",')
@@ -394,8 +416,10 @@ export const layer = Layer.effect(
           log.debug("loaded custom config", { path: Flag.OPENCODE_CONFIG })
         }
 
+        const stop = getConfigStop(result.configBoundary, ctx.worktree)
+
         if (!Flag.OPENCODE_DISABLE_PROJECT_CONFIG) {
-          for (const file of yield* ConfigPaths.files("opencode", ctx.directory, ctx.worktree).pipe(Effect.orDie)) {
+          for (const file of yield* ConfigPaths.files("opencode", ctx.directory, stop).pipe(Effect.orDie)) {
             yield* merge(file, yield* loadFile(file, authEnv), "local")
           }
         }
@@ -404,7 +428,7 @@ export const layer = Layer.effect(
         result.mode = result.mode || {}
         result.plugin = result.plugin || []
 
-        const directories = yield* ConfigPaths.directories(ctx.directory, ctx.worktree)
+        const directories = yield* ConfigPaths.directories(ctx.directory, stop)
 
         if (Flag.OPENCODE_CONFIG_DIR) {
           log.debug("loading config from OPENCODE_CONFIG_DIR", { path: Flag.OPENCODE_CONFIG_DIR })
