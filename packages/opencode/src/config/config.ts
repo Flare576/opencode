@@ -115,11 +115,11 @@ type Info = ConfigV1.Info & {
   plugin_origins?: ConfigPlugin.Origin[]
 }
 
-export function getConfigStop(boundary?: Info["configBoundary"], worktree?: string): string {
+export function getConfigStop(boundary?: Info["configBoundary"], worktree?: string, directory?: string): string {
   const effective = Flag.OPENCODE_CONFIG_BOUNDARY ?? boundary ?? "current"
   switch (effective) {
     case "none":
-      return worktree ?? "/"
+      return directory ?? worktree ?? "/"
     case "home":
       return Global.Path.home
     case "root":
@@ -128,6 +128,19 @@ export function getConfigStop(boundary?: Info["configBoundary"], worktree?: stri
     default:
       return worktree ?? "/"
   }
+}
+
+export function isBoundaryMoreRestrictive(
+  candidate: Info["configBoundary"],
+  current: Info["configBoundary"],
+): boolean {
+  const rank: Record<NonNullable<Info["configBoundary"]>, number> = {
+    none: 0,
+    current: 1,
+    home: 2,
+    root: 3,
+  }
+  return rank[candidate ?? "current"] < rank[current ?? "current"]
 }
 
 type State = {
@@ -416,11 +429,27 @@ export const layer = Layer.effect(
           log.debug("loaded custom config", { path: Flag.OPENCODE_CONFIG })
         }
 
-        const stop = getConfigStop(result.configBoundary, ctx.worktree)
+        let stop = getConfigStop(result.configBoundary, ctx.worktree, ctx.directory)
 
         if (!Flag.OPENCODE_DISABLE_PROJECT_CONFIG) {
-          for (const file of yield* ConfigPaths.files("opencode", ctx.directory, stop).pipe(Effect.orDie)) {
-            yield* merge(file, yield* loadFile(file, authEnv), "local")
+          let current = ctx.directory
+          while (true) {
+            for (const ext of ["jsonc", "json"]) {
+              const file = path.join(current, `opencode.${ext}`)
+              if (!(yield* fs.existsSafe(file))) continue
+              const loaded = yield* loadFile(file, authEnv)
+              if (Object.keys(loaded).length > 0) {
+                const prevBoundary = result.configBoundary
+                yield* merge(file, loaded, "local")
+                if (loaded.configBoundary && isBoundaryMoreRestrictive(loaded.configBoundary, prevBoundary)) {
+                  stop = getConfigStop(loaded.configBoundary, ctx.worktree, current)
+                }
+              }
+            }
+            if (current === stop) break
+            const parent = path.dirname(current)
+            if (parent === current) break
+            current = parent
           }
         }
 

@@ -109,7 +109,7 @@ export const layer: Layer.Layer<
       const config = yield* cfg.get()
       const ctx = yield* InstanceState.context
       const paths = new Set<string>()
-      const stop = getConfigStop(config.configBoundary, ctx.worktree)
+      const stop = getConfigStop(config.configBoundary, ctx.worktree, ctx.directory)
 
       for (const file of globalFiles) {
         if (yield* fs.existsSafe(file)) {
