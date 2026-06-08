@@ -254,3 +254,101 @@ describe("Instruction.systemPaths global config", () => {
     }),
   )
 })
+
+describe("Instruction.systemPaths configBoundary", () => {
+  const instructionLayerWith = (
+    globalDir: string,
+    boundary: "none" | "current" | "home" | "root" | undefined,
+  ) =>
+    Instruction.layer.pipe(
+      Layer.provide(TestConfig.layer({ get: () => Effect.succeed({ configBoundary: boundary }) })),
+      Layer.provide(FSUtil.defaultLayer),
+      Layer.provide(FetchHttpClient.layer),
+      Layer.provide(Global.layerWith({ home: globalDir, config: globalDir })),
+      Layer.provide(RuntimeFlags.layer({})),
+    )
+
+  const runWithBoundary = <A, E, R>(
+    globalDir: string,
+    instanceDir: string,
+    boundary: "none" | "current" | "home" | "root" | undefined,
+    effect: Effect.Effect<A, E, R>,
+  ) =>
+    effect.pipe(
+      Effect.provide(instructionLayerWith(globalDir, boundary)),
+      provideInstance(instanceDir),
+      Effect.provide(testInstanceStoreLayer),
+      Effect.provide(CrossSpawnSpawner.defaultLayer),
+    )
+
+  it.live("boundary home — AGENTS.md above project directory is discovered", () =>
+    Effect.gen(function* () {
+      const emptyGlobalDir = yield* tmpdirScoped()
+      const parentTmp = yield* tmpWithFiles({
+        "AGENTS.md": "# Parent Instructions",
+        "project/placeholder.ts": "",
+      })
+      const projectDir = path.join(parentTmp, "project")
+
+      yield* runWithBoundary(
+        emptyGlobalDir,
+        projectDir,
+        "home",
+        Effect.gen(function* () {
+          const svc = yield* Instruction.Service
+          const paths = yield* svc.systemPaths()
+          expect(paths.has(path.join(parentTmp, "AGENTS.md"))).toBe(true)
+        }),
+      )
+    }),
+  )
+
+  it.live("boundary none — AGENTS.md above launch directory is not discovered", () =>
+    Effect.gen(function* () {
+      const emptyGlobalDir = yield* tmpdirScoped()
+      const parentTmp = yield* tmpWithFiles({
+        "AGENTS.md": "# Parent Instructions",
+        "project/placeholder.ts": "",
+      })
+      const projectDir = path.join(parentTmp, "project")
+
+      yield* runWithBoundary(
+        emptyGlobalDir,
+        projectDir,
+        "none",
+        Effect.gen(function* () {
+          const svc = yield* Instruction.Service
+          const paths = yield* svc.systemPaths()
+          expect(paths.has(path.join(parentTmp, "AGENTS.md"))).toBe(false)
+        }),
+      )
+    }),
+  )
+
+  it.live("no boundary (undefined) inside a git repo — AGENTS.md above the git root is not discovered (backward compat)", () =>
+    Effect.gen(function* () {
+      const emptyGlobalDir = yield* tmpdirScoped()
+      const aboveGitRoot = yield* tmpdirScoped()
+
+      const gitRoot = yield* tmpdirScoped({ git: true })
+      const projectDir = path.join(gitRoot, "src")
+
+      yield* Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem
+        yield* fs.makeDirectory(projectDir, { recursive: true })
+        yield* fs.writeFileString(path.join(aboveGitRoot, "AGENTS.md"), "# Above git root")
+      })
+
+      yield* runWithBoundary(
+        emptyGlobalDir,
+        projectDir,
+        undefined,
+        Effect.gen(function* () {
+          const svc = yield* Instruction.Service
+          const paths = yield* svc.systemPaths()
+          expect(paths.has(path.join(aboveGitRoot, "AGENTS.md"))).toBe(false)
+        }),
+      )
+    }),
+  )
+})
